@@ -1,0 +1,752 @@
+---
+title: "Embryo Distribution within Bluehead Chub Nests"
+author: "Madison Betts and Emmanuel Frimpong"
+date: "8/21/25"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 6)
+```
+
+# Introduction
+
+This analysis examines how embryos are distributed across different compartments within bluehead chub nests. This study investigates spatial patterns and the distribution of different species' embryos (host, nest associate, manipulator) across nest sections.
+
+# Package Installation and Loading
+
+```{r packages, results='hide'}
+# Install required packages (run once)
+packages <- c("readxl", "ggplot2", "dplyr", "AICcmodavg", "lme4", "MuMIn", 
+              "broom.mixed", "broom", "lmerTest", "emmeans", "pbkrtest")
+
+# Check if packages are installed, install if not
+new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) install.packages(new_packages)
+
+# Load all packages
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(AICcmodavg)
+library(lme4)
+library(MuMIn)
+library(broom.mixed)
+library(broom)
+library(lmerTest)
+library(emmeans)
+library(pbkrtest)
+library(tidyverse)
+
+# Set options
+options(prompt = "=")
+```
+
+# Data Import and Preparation
+
+```{r data-import}
+# Read in excel sheets
+dividednests <- read_excel("embryo_distribution.xlsx", sheet = "prop_eggsgrav")
+genetics_raw <- read_excel("embryo_distribution.xlsx", sheet = "genetics_analysis", na = "#N/A")
+genetics_rawdata <- read_excel("embryo_distribution.xlsx", sheet = "genetics_rawdata")
+larv <- read_excel("embryo_distribution.xlsx", sheet = "larv_analysis")
+
+# Clean genetics data - remove rows with #N/A in key percentage columns
+genetics <- genetics_raw %>%
+  mutate(across(c(host_perc, assoc_perc, manip_perc, nonmanip_perc), 
+                ~ifelse(.x == "#N/A", NA, .x))) %>%
+  filter(if_all(c(host_perc, assoc_perc, manip_perc, nonmanip_perc), 
+                ~!is.na(.x)))
+
+# Display data structure
+cat("Divided nests data dimensions:", dim(dividednests), "\n")
+cat("Raw genetics data dimensions:", dim(genetics_raw), "\n")
+cat("Cleaned genetics data dimensions:", dim(genetics), "\n")
+cat("Larvae data dimensions:", dim(larv), "\n")
+
+# Report on data cleaning
+cat("Data cleaning summary:\n")
+cat("Original genetics data rows:", nrow(genetics_raw), "\n")
+cat("Cleaned genetics data rows:", nrow(genetics), "\n")
+cat("Rows removed due to #N/A values:", nrow(genetics_raw) - nrow(genetics), "\n")
+cat("Percentage of data retained:", round(nrow(genetics)/nrow(genetics_raw)*100, 1), "%\n")
+```
+
+```{r data-prep}
+# Assign compartments as factors
+dividednests$compartment <- factor(dividednests$compartment, 
+                                 levels = c("TD", "MD", "BD", "TU", "MU", "BU"), 
+                                 labels = c('1', '2', '3', '4', '5', '6'))
+```
+
+# Exploratory Data Analysis
+
+## Embryo Density Across Compartments
+
+```{r embryo-density-plot}
+# Visualize how embryo density varies across compartments
+embryodensity <- ggplot(dividednests, aes(x = compartment, y = propembryoct)) +
+  geom_boxplot(fill = "grey", notch = FALSE, position = position_dodge(preserve = "single")) +
+  scale_x_discrete(labels = c("TD", "MD", "BD", "TU", "MU", "BU")) +
+  labs(
+    x = "Nest Section",
+    y = "Volume of Eggs (%)",
+    title = "Embryo Density by Nest Compartment"
+  ) +
+  theme_bw() +
+  theme(
+    text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    axis.text = element_text(size = 15),
+    plot.title = element_text(size = 15, hjust = 0.5)
+  )
+
+embryodensity
+```
+
+## Relationship Between Nest Volume and Egg Volume
+
+```{r volume-relationship}
+# Scatter plot showing relationship between nest volume and egg volume
+plot(dividednests$propnestvol, dividednests$propembryoct, 
+     main = "Relationship between Nest Volume and Egg Volume", 
+     xlab = "Nest Section Volume (%)", 
+     ylab = "Egg Volume (%)", 
+     pch = 2, cex = 1.5, cex.lab = 1.5)
+abline(lm(dividednests$propembryoct ~ dividednests$propnestvol), col = "red") 
+lines(lowess(dividednests$propembryoct, dividednests$propnestvol), col = "blue")
+legend("topright", c("Linear fit", "Lowess fit"), col = c("red", "blue"), lty = 1)
+```
+
+## Actual vs. Target Nest Volumes
+
+```{r nest-volume-comparison}
+# Compare sampled nest volume vs targeted volume
+compare_gravvol <- ggplot(dividednests, aes(x = compartment, y = propnestvol)) +
+  geom_boxplot(fill = "grey", notch = FALSE) +
+  geom_hline(yintercept = 16.6, color = "blue", linewidth = 1.2, linetype = "dotted") +
+  scale_x_discrete(labels = c("TD", "MD", "BD", "TU", "MU", "BU")) +
+  labs(
+    title = "Actual nest volumes sampled vs targeted 16.6% per section",
+    x = "Nest Section",
+    y = "Volume of Gravel (%)"
+  ) +
+  theme_bw() +
+  theme(
+    text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    axis.text = element_text(size = 15),
+    plot.title = element_text(size = 15, hjust = 0.5)
+  )
+
+compare_gravvol
+```
+
+## Adjusted Embryo Density
+
+```{r adjusted-density-plot}
+# Plot showing egg density adjusted for sampled gravel volume
+densityadjusted <- ggplot(dividednests, aes(x = compartment, y = adjembryoct)) +
+  geom_boxplot(fill = "grey", notch = FALSE, position = position_dodge(preserve = "single")) +
+  scale_x_discrete(labels = c("TD", "MD", "BD", "TU", "MU", "BU")) +
+  labs(
+    x = "Nest Section",
+    y = "Adjusted Volume of Embryos (%)",
+    title = "Adjusted Embryo Density by Nest Compartment"
+  ) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black"),
+    text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    axis.text = element_text(size = 15),
+    plot.title = element_text(size = 15, hjust = 0.5)
+  )
+
+densityadjusted
+```
+
+```{r summary-stats}
+# Convert compartment back to meaningful labels for summary
+dividednests$compartment <- factor(dividednests$compartment,
+                                 levels = c("1", "2", "3", "4", "5", "6"),
+                                 labels = c("TD", "MD", "BD", "TU", "MU", "BU"))
+
+# Summary statistics of adjusted embryo counts by compartment 
+summary_stats <- dividednests %>%
+  group_by(compartment) %>%
+  summarise(
+    n = sum(!is.na(adjembryoct)),
+    mean = mean(adjembryoct, na.rm = TRUE),
+    sd = sd(adjembryoct, na.rm = TRUE),
+    se = sd / sqrt(n),
+    median = median(adjembryoct, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+print(summary_stats)
+```
+```{r sequence data}
+# Define custom species order
+species_order <- c("SR", "RSD", "BHC", "MRBD", "RFS", "CRS", "WS", "BND", "CC")
+
+# Define custom compartment order
+compartment_order <- c("TD", "MD", "BD", "TU", "MU", "BU")
+
+# Calculate average percent occurrence of each species in each compartment with standard errors
+species_compartment_summary <- genetics_rawdata %>%
+  group_by(compartment, species) %>%
+  summarise(
+    count = n(),
+    .groups = 'drop'
+  ) %>%
+  group_by(compartment) %>%
+  mutate(
+    total_in_compartment = sum(count),
+    percent_occurrence = round((count / total_in_compartment) * 100, 1),
+    # Calculate standard error for proportions
+    se_percent = round(sqrt((percent_occurrence/100 * (1 - percent_occurrence/100)) / total_in_compartment) * 100, 1)
+  ) %>%
+  select(compartment, species, count, percent_occurrence, se_percent) %>%
+  # Convert species and compartment to factors with custom order for sorting
+  mutate(
+    species = factor(species, levels = species_order),
+    compartment = factor(compartment, levels = compartment_order)
+  ) %>%
+  arrange(compartment, species)
+
+print("Average percent occurrence of each species by compartment with standard errors:")
+print(species_compartment_summary)
+
+# Create a wider format table for easier viewing (percent occurrence)
+species_percent_wide <- species_compartment_summary %>%
+  select(compartment, species, percent_occurrence) %>%
+  pivot_wider(names_from = compartment, values_from = percent_occurrence, values_fill = 0) %>%
+  # Ensure species order is maintained and select compartments in correct order
+  arrange(factor(species, levels = species_order)) %>%
+  select(species, all_of(compartment_order))
+
+print("Percent occurrence table (wide format):")
+print(species_percent_wide)
+
+# Create a wider format table for standard errors
+species_se_wide <- species_compartment_summary %>%
+  select(compartment, species, se_percent) %>%
+  pivot_wider(names_from = compartment, values_from = se_percent, values_fill = 0) %>%
+  # Ensure species order is maintained and select compartments in correct order
+  arrange(factor(species, levels = species_order)) %>%
+  select(species, all_of(compartment_order))
+
+print("Standard errors table (wide format):")
+print(species_se_wide)
+
+# Calculate total number of embryos sequenced for each species
+species_totals <- genetics_rawdata %>%
+  group_by(species) %>%
+  summarise(
+    total_embryos_sequenced = n(),
+    .groups = 'drop'
+  ) %>%
+  # Convert species to factor with custom order for sorting
+  mutate(species = factor(species, levels = species_order)) %>%
+  arrange(species)
+
+print("Total number of embryos sequenced per species:")
+print(species_totals)
+
+#Calculate grand total and species percentages
+grand_total <- sum(species_totals$total_embryos_sequenced)
+
+species_overall <- species_totals %>%
+  mutate(
+    percent_of_total = round((total_embryos_sequenced / grand_total) * 100, 1)
+  )
+
+print(paste("Grand total number of embryos sequenced:", grand_total))
+print("Overall percentages of each species within total:")
+print(species_overall)
+
+# Combined summary table with standard errors
+combined_summary <- species_totals %>%
+  left_join(
+    species_compartment_summary %>%
+      group_by(species) %>%
+      summarise(
+        compartments_present = n(),
+        avg_percent_per_compartment = round(mean(percent_occurrence), 1),
+        se_avg_percent = round(sqrt(sum(se_percent^2)) / n(), 1), # Pooled SE
+        .groups = 'drop'
+      ),
+    by = "species"
+  )
+
+print("Combined species summary with standard errors:")
+print(combined_summary)
+
+# Optional: Create a formatted table showing percent ± SE
+species_formatted <- species_compartment_summary %>%
+  mutate(
+    percent_with_se = paste0(percent_occurrence, " ± ", se_percent)
+  ) %>%
+  select(compartment, species, percent_with_se) %>%
+  pivot_wider(names_from = compartment, values_from = percent_with_se, values_fill = "0.0 ± 0.0") %>%
+  # Ensure species order is maintained and select compartments in correct order
+  arrange(factor(species, levels = species_order)) %>%
+  select(species, all_of(compartment_order))
+
+print("Formatted table with percent ± standard error:")
+print(species_formatted)
+```
+
+# Embryo Distribution Modeling
+
+## Initial Mixed-Effects Models (with singularity issues)
+
+```{r initial-models, results='hide'}
+# Initial models with random effects (these show singularity warnings)
+a0 <- glmer(cbind(sectionembryos, totnestembryos - sectionembryos) ~ (1|nest), 
+           family = binomial(link = "logit"), data = dividednests)
+a1 <- glmer(cbind(sectionembryos, totnestembryos - sectionembryos) ~ (1|nest) + bottom + top, 
+           family = binomial(link = 'logit'), data = dividednests)
+a2 <- glmer(cbind(sectionembryos, totnestembryos - sectionembryos) ~ (1|nest) + upstream, 
+           family = binomial(link = 'logit'), data = dividednests)
+a3 <- glmer(cbind(sectionembryos, totnestembryos - sectionembryos) ~ (1|nest) + MU + MD + BD + BU + TU, 
+           family = binomial(link = 'logit'), data = dividednests)
+
+# Check for singularity
+cmods <- list(a0, a1, a2, a3)
+singularity_check <- sapply(cmods, isSingular)
+cat("Singularity check for mixed models:", singularity_check, "\n")
+```
+
+## Fixed-Effects Models (corrected)
+
+```{r fixed-effects-models}
+# Fixed-effects models without random effects to address singularity
+a0_glm <- glm(cbind(sectionembryos, totnestembryos - sectionembryos) ~ 1,
+             family = binomial(link = "logit"),
+             data = dividednests)
+
+a1_glm <- glm(cbind(sectionembryos, totnestembryos - sectionembryos) ~ bottom + top,
+             family = binomial(link = "logit"),
+             data = dividednests)
+
+a2_glm <- glm(cbind(sectionembryos, totnestembryos - sectionembryos) ~ upstream,
+             family = binomial(link = "logit"),
+             data = dividednests)
+
+a3_glm <- glm(cbind(sectionembryos, totnestembryos - sectionembryos) ~ MU + MD + BD + BU + TU,
+             family = binomial(link = "logit"),
+             data = dividednests)
+
+# Model comparison
+cmods_glm <- list(a0_glm, a1_glm, a2_glm, a3_glm)
+Modnames_glm <- c("Null Model", "Vertical Gradient Model", "Horizontal Gradient Model", "Compartment Model")
+
+print(aictab(cand.set = cmods_glm, modnames = Modnames_glm, second.ord = TRUE), digits = 2)
+```
+
+```{r model-summaries}
+# Extract parameter summaries with confidence intervals
+model_summaries <- lapply(seq_along(cmods_glm), function(i) {
+  broom::tidy(cmods_glm[[i]], conf.int = TRUE, conf.level = 0.95) %>%
+    mutate(Model = Modnames_glm[i])
+})
+
+# Combine into one data frame
+all_params <- dplyr::bind_rows(model_summaries) %>%
+  dplyr::select(Model, term, estimate, conf.low, conf.high) %>%
+  dplyr::rename(
+    Variable = term,
+    Estimate = estimate,
+    CI_lower = conf.low,
+    CI_upper = conf.high
+  )
+
+# Add odds ratios
+all_params_or <- all_params %>%
+  mutate(
+    OR = exp(Estimate),
+    OR_lower = exp(CI_lower),
+    OR_upper = exp(CI_upper)
+  )
+
+print(all_params_or)
+
+# Calculate pseudo R² for each model individually
+cat("Pseudo R² values:\n")
+cat("Null Model:", 1 - (a0_glm$deviance / a0_glm$null.deviance), "\n")
+cat("Vertical Gradient Model:", 1 - (a1_glm$deviance / a1_glm$null.deviance), "\n")
+cat("Horizontal Gradient Model:", 1 - (a2_glm$deviance / a2_glm$null.deviance), "\n")
+cat("Vertical and Horizontal Gradient Model:", 1 - (a3_glm$deviance / a3_glm$null.deviance), "\n")
+```
+# Genetic Analysis: Host vs Associate Embryos
+
+## Visualization of Genetic Types
+
+```{r genetic-plots}
+# Plot host embryo distribution
+hostembryo <- ggplot(genetics, aes(x = compartment, y = host_perc)) +
+  geom_boxplot(fill = "grey", notch = FALSE, position = position_dodge(preserve = "single")) +
+  scale_x_discrete(labels = c("TD", "MD", "BD", "TU", "MU", "BU")) +
+  labs(
+    x = "Nest Compartment",
+    y = "Host Embryo (%)",
+    title = "Proportion of Host Embryos by Nest Compartment"
+  ) +
+  theme_bw() +
+  theme(
+    text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    axis.text = element_text(size = 15),
+    plot.title = element_text(size = 15, hjust = 0.5)
+  )
+
+hostembryo
+
+# Plot manipulator embryo distribution
+manipembryo <- ggplot(genetics, aes(x = compartment, y = manip_perc)) + 
+  geom_boxplot(fill = "grey", notch = FALSE, position = position_dodge(preserve = "single")) +
+  scale_x_discrete(labels = c("TD", "MD", "BD", "TU", "MU", "BU")) +
+  labs(
+    x = "Nest Compartment",
+    y = "Manipulator Embryo (%)",
+    title = "Proportion of Manipulator Embryos by Nest Compartment"
+  ) +
+  theme_bw() +
+  theme(
+    text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    axis.text = element_text(size = 15),
+    plot.title = element_text(size = 15, hjust = 0.5)
+  )
+
+manipembryo
+```
+
+## Host vs Associate Distribution Analysis
+
+```{r host-associate-models}
+# Models for host vs associate distribution
+b0 <- glmer(cbind(host_total, associate_total) ~ (1|nest), 
+           family = binomial(link='logit'), data = genetics)
+b1 <- glmer(cbind(host_total, associate_total) ~ (1|nest) + MD + MU + BD + BU + TU, 
+           family = binomial(link='logit'), data = genetics)
+b2 <- glmer(cbind(host_total, associate_total) ~ (1|nest) + bottom + top, 
+           family = binomial(link='logit'), data = genetics)
+b3 <- glmer(cbind(host_total, associate_total) ~ (1|nest) + upstream, 
+           family = binomial(link='logit'), data = genetics)
+
+cmods_b <- list(b0, b1, b2, b3)
+Modnames_b <- c("Null Model", "Compartment Model", "Vertical Gradient Model", "Horizontal Gradient Model")
+
+# Check singularity
+cat("Singularity check for host/associate models:", sapply(cmods_b, isSingular), "\n")
+
+# AIC model selection
+print(aictab(cand.set = cmods_b, modnames = Modnames_b, second.ord = TRUE), digits = 2)
+```
+
+```{r host-associate-summaries}
+# Parameter summaries with CIs
+b_summaries <- lapply(seq_along(cmods_b), function(i) {
+  broom.mixed::tidy(cmods_b[[i]], effects = "fixed", conf.int = TRUE, conf.level = 0.95) %>%
+    mutate(Model = Modnames_b[i])
+})
+
+b_all <- dplyr::bind_rows(b_summaries) %>%
+  dplyr::select(Model, term, estimate, conf.low, conf.high) %>%
+  dplyr::rename(
+    Variable = term,
+    Estimate = estimate,
+    CI_lower = conf.low,
+    CI_upper = conf.high
+  ) %>%
+  mutate(
+    OR = exp(Estimate),
+    OR_lower = exp(CI_lower),
+    OR_upper = exp(CI_upper)
+  )
+
+print(b_all)
+
+#Calculate R² Values
+conditional_r2_b <- data.frame(
+  Model = Modnames_b,
+  Conditional_R2 = numeric(length(cmods_b))
+)
+
+for(i in 1:length(cmods_b)) {
+  r2_vals <- r.squaredGLMM(cmods_b[[i]])
+  conditional_r2_b$Conditional_R2[i] <- r2_vals[1, "R2c"]  # Fixed: R2c not R2b, and conditional_r2_b not conditional_r2
+}
+
+cat("Conditional R² values:\n")
+print(conditional_r2_b)
+
+# Variable importance
+sw_b <- sw(cmods_b)
+print(sw_b)
+```
+
+## Manipulator vs Non-manipulator Analysis
+
+```{r manipulator-models}
+# Models for manipulator vs non-manipulator distribution
+c0 <- glmer(cbind(manipulator_total, nonmanipulator_total) ~ (1|nest), 
+           family = binomial(link='logit'), data = genetics)
+c1 <- glmer(cbind(manipulator_total, nonmanipulator_total) ~ (1|nest) + MD + MU + BD + BU + TU, 
+           family = binomial(link='logit'), data = genetics)
+c2 <- glmer(cbind(manipulator_total, nonmanipulator_total) ~ (1|nest) + bottom + top, 
+           family = binomial(link='logit'), data = genetics)
+c3 <- glmer(cbind(manipulator_total, nonmanipulator_total) ~ (1|nest) + upstream, 
+           family = binomial(link='logit'), data = genetics)
+
+cmods_c <- list(c0, c1, c2, c3)
+Modnames_c <- c("Null Model", "Compartment Model", "Vertical Gradient Model", "Horizontal Gradient Model")
+
+# Check singularity
+cat("Singularity check for manipulator models:", sapply(cmods_c, isSingular), "\n")
+
+# AIC model selection
+print(aictab(cand.set = cmods_c, modnames = Modnames_c, second.ord = TRUE), digits = 2)
+```
+
+```{r manipulator-summaries}
+# Parameter summaries with CIs
+c_summaries <- lapply(seq_along(cmods_c), function(i) {
+  broom.mixed::tidy(cmods_c[[i]], effects = "fixed", conf.int = TRUE, conf.level = 0.95) %>%
+    mutate(Model = Modnames_c[i])
+})
+
+c_all <- dplyr::bind_rows(c_summaries) %>%
+  dplyr::select(Model, term, estimate, conf.low, conf.high) %>%
+  dplyr::rename(
+    Variable = term,
+    Estimate = estimate,
+    CI_lower = conf.low,
+    CI_upper = conf.high
+  ) %>%
+  mutate(
+    OR = exp(Estimate),
+    OR_lower = exp(CI_lower),
+    OR_upper = exp(CI_upper)
+  )
+
+print(c_all)
+
+#Calculate R² Values
+conditional_r2_c <- data.frame(
+  Model = Modnames_c,
+  Conditional_R2 = numeric(length(cmods_c))
+)
+
+for(i in 1:length(cmods_c)) {
+  r2_vals <- r.squaredGLMM(cmods_c[[i]])
+  conditional_r2_c$Conditional_R2[i] <- r2_vals[1, "R2c"]  # Fixed: conditional_r2_c not conditional_r2
+}
+
+cat("Conditional R² values:\n")
+print(conditional_r2_c)
+
+# Variable importance
+sw_c <- sw(cmods_c)
+print(sw_c)
+```
+
+#Creation of Fig. 3
+```{r}
+# Create pie charts for each compartment showing host-assoc and manip-nonmanip percentages
+
+# Prepare data for host-assoc pie charts
+host_assoc_data <- genetics_raw %>%
+  group_by(compartment) %>%
+  summarise(
+    host = mean(host_perc, na.rm = TRUE),
+    assoc = mean(assoc_perc, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_longer(cols = c(host, assoc), names_to = "category", values_to = "percentage") %>%
+  mutate(
+    compartment = factor(compartment, levels = compartment_order),
+    category = factor(category, levels = c("host", "assoc"))
+  )
+
+# Prepare data for manip-nonmanip pie charts
+manip_data <- genetics_raw %>%
+  group_by(compartment) %>%
+  summarise(
+    manip = mean(manip_perc, na.rm = TRUE),
+    nonmanip = mean(nonmanip_perc, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_longer(cols = c(manip, nonmanip), names_to = "category", values_to = "percentage") %>%
+  mutate(
+    compartment = factor(compartment, levels = compartment_order),
+    category = factor(category, levels = c("manip", "nonmanip"))
+  )
+
+# Create host-assoc pie charts
+host_assoc_plots <- host_assoc_data %>%
+  split(.$compartment) %>%
+  map(~ ggplot(.x, aes(x = "", y = percentage, fill = category)) +
+    geom_col(width = 1) +
+    coord_polar("y", start = 0) +
+    scale_fill_manual(values = c("host" = "navyblue", "assoc" = "lightgrey")) +
+    theme_void() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 12),
+      legend.position = "bottom"
+    ) +
+    labs(
+      title = paste("Host-Assoc:", unique(.x$compartment)),
+      fill = "Category"
+    )
+  )
+
+# Create manip-nonmanip pie charts
+manip_plots <- manip_data %>%
+  split(.$compartment) %>%
+  map(~ ggplot(.x, aes(x = "", y = percentage, fill = category)) +
+    geom_col(width = 1) +
+    coord_polar("y", start = 0) +
+    scale_fill_manual(values = c("manip" = "darkorange", "nonmanip" = "lightgrey")) +
+    theme_void() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 12),
+      legend.position = "bottom"
+    ) +
+    labs(
+      title = paste("Manip-Nonmanip:", unique(.x$compartment)),
+      fill = "Category"
+    )
+  )
+
+# Display all pie charts
+library(gridExtra)
+
+# Arrange host-assoc pie charts
+print("Host-Associated pie charts by compartment:")
+grid.arrange(grobs = host_assoc_plots, ncol = 3)
+
+# Arrange manip-nonmanip pie charts
+print("Manipulated-Non-manipulated pie charts by compartment:")
+grid.arrange(grobs = manip_plots, ncol = 3)
+
+# Output overall percentages for each compartment with SEs
+print("Overall percentages by compartment (with SEs):")
+compartment_percentages <- genetics_raw %>%
+  group_by(compartment) %>%
+  summarise(
+    host_percent       = round(mean(host_perc, na.rm = TRUE), 1),
+    host_percent_se    = round(sd(host_perc, na.rm = TRUE) / sqrt(sum(!is.na(host_perc))), 1),
+    manipulator_percent    = round(mean(manip_perc, na.rm = TRUE), 1),
+    manipulator_percent_se = round(sd(manip_perc, na.rm = TRUE) / sqrt(sum(!is.na(manip_perc))), 1),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    compartment = factor(compartment, levels = compartment_order),
+    host_percent_fmt = paste0(host_percent, " ± ", host_percent_se),
+    manipulator_percent_fmt = paste0(manipulator_percent, " ± ", manipulator_percent_se)
+  ) %>%
+  arrange(compartment)
+
+print(compartment_percentages)
+
+# Save host-assoc pies (transparent background, compartment code in filename)
+walk2(host_assoc_plots, names(host_assoc_plots), ~ {
+  ggsave(
+    filename = paste0("HostAssoc_", unique(.x$data$compartment), ".png"),
+    plot = .x + theme(plot.title = element_blank(),
+                      legend.position = "none"),
+    dpi = 300, width = 4, height = 4, units = "in",
+    bg = "transparent"
+  )
+})
+
+# Save manip-nonmanip pies (transparent background, compartment code in filename)
+walk2(manip_plots, names(manip_plots), ~ {
+  ggsave(
+    filename = paste0("Manip_", unique(.x$data$compartment), ".png"),
+    plot = .x + theme(plot.title = element_blank(),
+                      legend.position = "none"),
+    dpi = 300, width = 4, height = 4, units = "in",
+    bg = "transparent"
+  )
+})
+density_summary <- dividednests %>%
+  group_by(compartment) %>%
+  summarise(
+    mean_adj = round(mean(adjembryoct, na.rm = TRUE), 1),
+    se_adj   = round(sd(adjembryoct, na.rm = TRUE) / sqrt(n()), 1),
+    .groups = "drop"
+  ) %>%
+  mutate(mean_se = paste0(mean_adj, " ± ", se_adj))
+
+print("Mean ± SE by compartment:")
+print(density_summary)
+
+#save individual boxplots that show total embryo distribution across nest sections
+boxplots <- dividednests %>%
+  split(.$compartment) %>%
+  map(~ ggplot(.x, aes(x = compartment, y = adjembryoct)) +
+        geom_boxplot(
+          fill = "white",
+          color = "black",
+          notch = FALSE,
+          outlier.shape = NA   # removes outlier points
+        ) +
+        theme_void() +          # removes axes, labels, grid
+        theme(legend.position = "none",
+              plot.margin = margin(0, 0, 0, 0))  # minimal margins
+  )
+
+# save indivdual plots
+walk2(boxplots, names(boxplots), ~ {
+  ggsave(
+    filename = paste0("Boxplot_", .y, ".png"),
+    plot = .x,
+    dpi = 300, width = 3, height = 5, units = "in",
+    bg = "transparent"
+  )
+})
+```
+
+
+# Larvae vs Embryo Distribution Analysis
+
+```{r larvae-analysis}
+# Compare larvae and egg proportions across nest sections
+larvmodel <- lmer(larv_prop ~ compartment + (1 | nest), data = larv)
+summary(larvmodel)
+
+# Pairwise comparisons using Tukey HSD
+larv_pairwise <- emmeans(larvmodel, pairwise ~ compartment, adjust = "tukey")
+print(larv_pairwise)
+
+# Extract comparison summary with confidence intervals
+larv_comparisons <- larv_pairwise$contrasts
+larv_comparisons_summary <- summary(larv_pairwise$contrasts, infer = c(TRUE, TRUE))
+print(larv_comparisons_summary[, c("contrast", "estimate", "lower.CL", "upper.CL")])
+```
+
+# Summary and Conclusions
+
+Our analysis examined the spatial distribution of embryos within bluehead chub nests across different compartments. Key findings include:
+
+1. **Embryo Distribution**: The analysis revealed significant spatial patterns in embryo distribution across nest compartments.
+
+2. **Model Selection**: Fixed-effects models were preferred over mixed-effects for modeling embryo distribution due to singularity issues with the random effect structure.
+
+3. **Species Distribution Patterns**: Different patterns were observed for host, associate, nonmanipulator, and manipulator embryos across nest compartments.
+
+4. **Larvae vs Embryos**: Pairwise comparisons revealed significant differences in larval proportions between some nest compartments.
+
+This analysis shows spatial patterns in embryo distribution within bluehead chub nests and supports the existence of an embryonic selfish herd.
