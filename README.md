@@ -30,3 +30,5 @@ The objective of this study was to determine whether certain species in the hete
 ## Funding and Acknowledgments
 
 This study was supported by the National Science Foundation (grant #2039692). All methods were conducted with approval from the Virginia Tech Institutional Animal Care and Use Committee (IACUC) under permit number 20-213. The participation of coauthor E.M.H. was supported in part by the Virginia Agricultural Experiment Station under the U.S. Department of Agriculture’s National Institute of Food and Agriculture program. We would like to thank S. Brooks, M. Burgess, T. Bustamante, N. Ferguson, S. Floyd, H. Greenway, M. Harris, K. Mowry, T. Pham, B. Peoples, E. Shawish, T. Stephenson, K. Tanner, and S. Wolf for their help in the field and lab. Special thanks to G. Anane-Taabeah, C. Carey, S. Harris, and K. Ortiz for their help troubleshooting in the genetics laboratory, and to T. Pusser for his photography.  
+
+[![DOI](https://zenodo.org/badge/1024537475.svg)](https://doi.org/10.5281/zenodo.16955721)
