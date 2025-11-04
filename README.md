@@ -1,5 +1,5 @@
 # The Divided Nest Experiment
-## Embryonic selfish-herding blurs the line between brood parasitism and mutualism for communal-breeding stream fishes
+## *Embryonic selfish-herding blurs the line between brood parasitism and mutualism for communal-breeding stream fishes*
 
 The following repository contains data, code, and information related to a study conducted by the Frimpong Lab at Virginia Tech, which investigated the distribution of Leuciscid embryos within bluehead chub nests in Toms Creek, near Blacksburg, VA, USA from 2021-2023. As of October, 2025, the full study has been accepted for publication at *Ecology*.
 
