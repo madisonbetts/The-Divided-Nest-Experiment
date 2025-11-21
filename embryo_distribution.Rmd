@@ -14,16 +14,16 @@ output:
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 6)
 ```
 
-# Introduction
+Introduction
 
 This analysis examines how embryos are distributed across different compartments within bluehead chub nests. This study investigates spatial patterns and the distribution of different species' embryos (host, nest associate, manipulator) across nest sections.
 
-# Package Installation and Loading
+Package Installation and Loading
 
 ```{r packages, results='hide'}
 # Install required packages (run once)
 packages <- c("readxl", "ggplot2", "dplyr", "AICcmodavg", "lme4", "MuMIn", 
-              "broom.mixed", "broom", "lmerTest", "emmeans", "pbkrtest")
+              "broom.mixed", "broom", "lmerTest", "emmeans", "pbkrtest", "tidyverse", "gridExtra", "DHARMa")
 
 # Check if packages are installed, install if not
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
@@ -31,6 +31,8 @@ if(length(new_packages)) install.packages(new_packages)
 
 # Load all packages
 library(readxl)
+library(DHARMa)
+library(gridExtra)
 library(ggplot2)
 library(dplyr)
 library(AICcmodavg)
@@ -47,7 +49,7 @@ library(tidyverse)
 options(prompt = "=")
 ```
 
-# Data Import and Preparation
+Data Import and Preparation
 
 ```{r data-import}
 # Read in excel sheets
@@ -84,9 +86,9 @@ dividednests$compartment <- factor(dividednests$compartment,
                                  labels = c('1', '2', '3', '4', '5', '6'))
 ```
 
-# Exploratory Data Analysis
+Exploratory Data Analysis:
 
-## Embryo Density Across Compartments
+Embryo Density Across Compartments
 
 ```{r embryo-density-plot}
 # Visualize how embryo density varies across compartments
@@ -108,8 +110,7 @@ embryodensity <- ggplot(dividednests, aes(x = compartment, y = propembryoct)) +
 
 embryodensity
 ```
-
-## Relationship Between Nest Volume and Egg Volume
+Relationship Between Nest Volume and Egg Volume
 
 ```{r volume-relationship}
 # Scatter plot showing relationship between nest volume and egg volume
@@ -123,7 +124,7 @@ lines(lowess(dividednests$propembryoct, dividednests$propnestvol), col = "blue")
 legend("topright", c("Linear fit", "Lowess fit"), col = c("red", "blue"), lty = 1)
 ```
 
-## Actual vs. Target Nest Volumes
+Actual vs. Target Nest Volumes
 
 ```{r nest-volume-comparison}
 # Compare sampled nest volume vs targeted volume
@@ -147,7 +148,7 @@ compare_gravvol <- ggplot(dividednests, aes(x = compartment, y = propnestvol)) +
 compare_gravvol
 ```
 
-## Adjusted Embryo Density
+Adjusted Embryo Density
 
 ```{r adjusted-density-plot}
 # Plot showing egg density adjusted for sampled gravel volume
@@ -305,9 +306,9 @@ print("Formatted table with percent ± standard error:")
 print(species_formatted)
 ```
 
-# Embryo Distribution Modeling
+Embryo Distribution Modeling:
 
-## Initial Mixed-Effects Models (with singularity issues)
+Initial Mixed-Effects Models (with singularity issues)
 
 ```{r initial-models, results='hide'}
 # Initial models with random effects (these show singularity warnings)
@@ -326,7 +327,7 @@ singularity_check <- sapply(cmods, isSingular)
 cat("Singularity check for mixed models:", singularity_check, "\n")
 ```
 
-## Fixed-Effects Models (corrected)
+Fixed-Effects Models (corrected)
 
 ```{r fixed-effects-models}
 # Fixed-effects models without random effects to address singularity
@@ -387,9 +388,9 @@ cat("Vertical Gradient Model:", 1 - (a1_glm$deviance / a1_glm$null.deviance), "\
 cat("Horizontal Gradient Model:", 1 - (a2_glm$deviance / a2_glm$null.deviance), "\n")
 cat("Vertical and Horizontal Gradient Model:", 1 - (a3_glm$deviance / a3_glm$null.deviance), "\n")
 ```
-# Genetic Analysis: Host vs Associate Embryos
+Genetic Analysis: Host vs Associate Embryos
 
-## Visualization of Genetic Types
+Visualization of Genetic Types
 
 ```{r genetic-plots}
 # Plot host embryo distribution
@@ -431,7 +432,7 @@ manipembryo <- ggplot(genetics, aes(x = compartment, y = manip_perc)) +
 manipembryo
 ```
 
-## Host vs Associate Distribution Analysis
+Host vs Associate Distribution Analysis
 
 ```{r host-associate-models}
 # Models for host vs associate distribution
@@ -496,7 +497,7 @@ sw_b <- sw(cmods_b)
 print(sw_b)
 ```
 
-## Manipulator vs Non-manipulator Analysis
+Manipulator vs Non-manipulator Analysis
 
 ```{r manipulator-models}
 # Models for manipulator vs non-manipulator distribution
@@ -561,7 +562,7 @@ sw_c <- sw(cmods_c)
 print(sw_c)
 ```
 
-#Creation of Fig. 3
+Creation of Fig. 3
 ```{r}
 # Create pie charts for each compartment showing host-assoc and manip-nonmanip percentages
 
@@ -628,9 +629,6 @@ manip_plots <- manip_data %>%
       fill = "Category"
     )
   )
-
-# Display all pie charts
-library(gridExtra)
 
 # Arrange host-assoc pie charts
 print("Host-Associated pie charts by compartment:")
@@ -720,30 +718,69 @@ walk2(boxplots, names(boxplots), ~ {
 ```
 
 
-# Larvae vs Embryo Distribution Analysis
+Larvae vs Embryo Distribution Analysis
 
 ```{r larvae-analysis}
-# Compare larvae and egg proportions across nest sections
-larvmodel <- lmer(larv_prop ~ compartment + (1 | nest), data = larv)
-summary(larvmodel)
+# Analyze larvae proportion across nest sections
+larv_glmm <- glmer(cbind(larvae, total_embryos - larvae) ~ compartment + (1|nest), data = larv, family = binomial(link = "logit"))
 
-# Pairwise comparisons using Tukey HSD
-larv_pairwise <- emmeans(larvmodel, pairwise ~ compartment, adjust = "tukey")
-print(larv_pairwise)
+summary(larv_glmm)
 
-# Extract comparison summary with confidence intervals
-larv_comparisons <- larv_pairwise$contrasts
-larv_comparisons_summary <- summary(larv_pairwise$contrasts, infer = c(TRUE, TRUE))
-print(larv_comparisons_summary[, c("contrast", "estimate", "lower.CL", "upper.CL")])
+# Check for convergence
+larv_glmm@optinfo$conv$lme4$messages  # Should be NULL if converged properly
+
+# Calculate overdispersion parameter
+overdispersion_test <- function(model) {
+  rdf <- df.residual(model)
+  rp <- residuals(model, type = "pearson")
+  Pearson.chisq <- sum(rp^2)
+  prat <- Pearson.chisq/rdf
+  pval <- pchisq(Pearson.chisq, df=rdf, lower.tail=FALSE)
+  c(chisq=Pearson.chisq, ratio=prat, rdf=rdf, p=pval)
+}
+
+overdispersion_test(larv_glmm) #should return ~1
+
+# Overdispersion test came back positive, must fix overdispersion by adding observation-level random effect
+
+larv$obs_id <- 1:nrow(larv) #add observation-level ID into data
+
+larv_glmm2 <- glmer(cbind(larvae, total_embryos - larvae) ~ compartment + (1|nest) + (1|obs_id), data = larv, family = binomial, control = glmerControl(optimizer = "bobyqa"))
+
+summary(larv_glmm2)
+
+overdispersion_test(larv_glmm2) #should return ~1
+
+# Check for any warnings with the new model
+larv_glmm2@optinfo$conv$lme4$messages  # Should still be NULL
+
+# Check convergence code
+larv_glmm2@optinfo$conv$opt  # Should be 0
+
+# Look at variance components
+VarCorr(larv_glmm2)
+
+# Check residuals
+sim_resids <- simulateResiduals(fittedModel = larv_glmm4, n = 250)
+
+plot(sim_resids)
+
+plotResiduals(sim_resids)
+plotQQunif(sim_resids)
+
+larv_emm <- emmeans(larv_glmm2, ~ compartment, type = "response")
+larv_emm
+
+pairs(larv_emm, adjust = "Tukey")
 ```
 
-# Summary and Conclusions
+Summary and Conclusions
 
 Our analysis examined the spatial distribution of embryos within bluehead chub nests across different compartments. Key findings include:
 
 1. **Embryo Distribution**: The analysis revealed significant spatial patterns in embryo distribution across nest compartments.
 
-2. **Model Selection**: Fixed-effects models were preferred over mixed-effects for modeling embryo distribution due to singularity issues with the random effect structure.
+2. **Model Selection**: Fixed-effects models were preferred over mixed-effects for modeling total embryo distribution due to singularity issues with the random effect structure.
 
 3. **Species Distribution Patterns**: Different patterns were observed for host, associate, nonmanipulator, and manipulator embryos across nest compartments.
 
